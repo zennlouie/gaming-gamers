@@ -27,6 +27,20 @@ const GAME_TEMPLATES = {
     primaryButtonLabel: 'Join Queue',
     secondaryButtonLabel: 'Join Backup',
   },
+  arena: {
+    key: 'arena',
+    name: 'ARENA',
+    size: 3,
+    primaryButtonLabel: 'Join Queue',
+    secondaryButtonLabel: 'SUB',
+  },
+  amongus: {
+    key: 'amongus',
+    name: 'AMONG US',
+    size: 15,
+    primaryButtonLabel: 'Join Queue',
+    secondaryButtonLabel: 'SUB',
+  },
 };
 
 function getTemplateChoices() {

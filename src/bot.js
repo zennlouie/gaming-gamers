@@ -211,14 +211,7 @@ function buildCommands() {
       ),
     new SlashCommandBuilder()
       .setName('queueconfig')
-      .setDescription('View the role mapping for a game template.')
-      .addStringOption((option) =>
-        option
-          .setName('game')
-          .setDescription('Which game template to inspect')
-          .setRequired(true)
-          .addChoices(...templateChoices),
-      ),
+      .setDescription('View the role mapping for all game templates.'),
   ].map((command) => command.toJSON());
 }
 
@@ -271,21 +264,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       if (interaction.commandName === 'queueconfig') {
-        const templateKey = interaction.options.getString('game', true);
-        const template = getTemplateByKey(templateKey);
-
-        if (!template) {
-          await interaction.reply({
-            content: 'That game template no longer exists. Restart the bot and try the updated slash command.',
-            ephemeral: true,
-          });
-          return;
-        }
-
-        const roleId = data.roleMappings[interaction.guildId]?.[template.key];
-        const message = roleId
-          ? `${template.name} currently pings <@&${roleId}>.`
-          : `${template.name} has no ping role configured yet.`;
+        const guildRoleMappings = data.roleMappings[interaction.guildId] || {};
+        const lines = Object.values(GAME_TEMPLATES).map((template) => {
+          const roleId = guildRoleMappings[template.key];
+          return roleId
+            ? `- **${template.name}**: <@&${roleId}>`
+            : `- **${template.name}**: Not configured`;
+        });
+        const message = [
+          '**Queue role config**',
+          ...lines,
+        ].join('\n');
 
         await interaction.reply({
           content: message,

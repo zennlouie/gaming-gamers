@@ -14,7 +14,7 @@ A small Discord bot for organizing game invites with reusable templates, queue b
 
 - `/invite game:apex note:ranked size:3`
 - `/setrole game:apex role:@Apex`
-- `/queueconfig game:apex`
+- `/queueconfig`
 
 ## Setup
 
@@ -30,6 +30,9 @@ npm start
 
 - `apex`
 - `valorant`
-- `league`
+- `cs`
+- `aram`
+- `arena`
+- `amongus`
 
 You can add more in `src/templates.js`.
