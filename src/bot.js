@@ -13,7 +13,7 @@ const {
   SlashCommandBuilder,
 } = require('discord.js');
 
-const { GAME_TEMPLATES, getTemplateChoices } = require('./templates');
+const { GAME_TEMPLATES, getAllTemplates, getTemplateChoices } = require('./templates');
 const { loadData, saveData } = require('./storage');
 
 dotenv.config();
@@ -39,13 +39,23 @@ function createQueueId() {
 }
 
 function getTemplateByKey(templateKey) {
-  if (GAME_TEMPLATES[templateKey]) {
-    return GAME_TEMPLATES[templateKey];
+  const templates = getAllTemplates(data.customTemplates);
+
+  if (templates[templateKey]) {
+    return templates[templateKey];
   }
 
-  return Object.values(GAME_TEMPLATES).find(
+  return Object.values(templates).find(
     (template) => template.key === templateKey,
   );
+}
+
+function normalizeTemplateKey(value) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
 }
 
 function formatUsers(userIds) {
@@ -108,7 +118,7 @@ function parseScheduledTime(input) {
 }
 
 function buildHelpMessage() {
-  const templateList = Object.values(GAME_TEMPLATES)
+  const templateList = Object.values(getAllTemplates(data.customTemplates))
     .map((template) => `\`${template.key}\``)
     .join(', ');
 
@@ -118,8 +128,8 @@ function buildHelpMessage() {
     '`/invite game:<template> note:<optional> time:<HH:mm> size:<optional>`',
     'Creates a queue post and pings the configured role for that game.',
     '',
-    '`/creategame game:<template> note:<optional> time:<HH:mm> size:<optional>`',
-    'Creates the same queue post as `/invite`.',
+    '`/creategame name:<game name> size:<players> key:<optional>`',
+    'Adds a new game template that becomes available in `/invite`.',
     '',
     '`/setrole game:<template> role:@Role`',
     'Sets which role gets pinged for a game template.',
@@ -378,8 +388,47 @@ async function createQueueFromCommand(interaction) {
   saveData(data);
 }
 
+async function createTemplateFromCommand(interaction) {
+  const name = interaction.options.getString('name', true).trim();
+  const size = interaction.options.getInteger('size', true);
+  const keyInput = interaction.options.getString('key');
+  const key = normalizeTemplateKey(keyInput || name);
+
+  if (!key) {
+    await interaction.reply({
+      content: 'Game name or key must include letters or numbers.',
+      ephemeral: true,
+    });
+    return;
+  }
+
+  if (getTemplateByKey(key)) {
+    await interaction.reply({
+      content: `A game template with key \`${key}\` already exists.`,
+      ephemeral: true,
+    });
+    return;
+  }
+
+  data.customTemplates[key] = {
+    key,
+    name: name.toUpperCase(),
+    size,
+    primaryButtonLabel: 'Join Queue',
+    secondaryButtonLabel: 'Join Sub',
+  };
+  saveData(data);
+
+  await registerCommands();
+
+  await interaction.reply({
+    content: `Created game template **${name.toUpperCase()}** with key \`${key}\` and default size ${size}. You can now use \`/invite game:${key}\`.`,
+    ephemeral: true,
+  });
+}
+
 function buildCommands() {
-  const templateChoices = getTemplateChoices();
+  const templateChoices = getTemplateChoices(data.customTemplates);
 
   return [
     new SlashCommandBuilder()
@@ -414,33 +463,27 @@ function buildCommands() {
       ),
     new SlashCommandBuilder()
       .setName('creategame')
-      .setDescription('Create a game queue from a template.')
+      .setDescription('Create a new game template for future invites.')
+      .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
       .addStringOption((option) =>
         option
-          .setName('game')
-          .setDescription('Which game template to use')
-          .setRequired(true)
-          .addChoices(...templateChoices),
-      )
-      .addStringOption((option) =>
-        option
-          .setName('note')
-          .setDescription('Optional details like mode, rank, map, or time')
-          .setRequired(false),
-      )
-      .addStringOption((option) =>
-        option
-          .setName('time')
-          .setDescription('Optional game time in 24-hour HH:mm format')
-          .setRequired(false),
+          .setName('name')
+          .setDescription('Display name for the new game')
+          .setRequired(true),
       )
       .addIntegerOption((option) =>
         option
           .setName('size')
-          .setDescription('Override the default team size for this queue')
-          .setRequired(false)
+          .setDescription('Default queue size for this game')
+          .setRequired(true)
           .setMinValue(1)
           .setMaxValue(20),
+      )
+      .addStringOption((option) =>
+        option
+          .setName('key')
+          .setDescription('Optional short key for slash commands, like marvel-rivals')
+          .setRequired(false),
       ),
     new SlashCommandBuilder()
       .setName('setrole')
@@ -519,7 +562,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       if (interaction.commandName === 'queueconfig') {
         const guildRoleMappings = data.roleMappings[interaction.guildId] || {};
-        const lines = Object.values(GAME_TEMPLATES).map((template) => {
+        const lines = Object.values(getAllTemplates(data.customTemplates)).map((template) => {
           const roleId = guildRoleMappings[template.key];
           return roleId
             ? `- **${template.name}**: <@&${roleId}>`
@@ -545,7 +588,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
-      if (interaction.commandName === 'invite' || interaction.commandName === 'creategame') {
+      if (interaction.commandName === 'creategame') {
+        await createTemplateFromCommand(interaction);
+        return;
+      }
+
+      if (interaction.commandName === 'invite') {
         await createQueueFromCommand(interaction);
         return;
       }

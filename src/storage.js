@@ -7,6 +7,7 @@ const dataFile = path.join(dataDir, 'bot-data.json');
 const defaultData = {
   roleMappings: {},
   queues: {},
+  customTemplates: {},
 };
 
 function ensureDataFile() {

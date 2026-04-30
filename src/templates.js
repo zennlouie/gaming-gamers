@@ -43,8 +43,15 @@ const GAME_TEMPLATES = {
   },
 };
 
-function getTemplateChoices() {
-  return Object.values(GAME_TEMPLATES).map((template) => ({
+function getAllTemplates(customTemplates = {}) {
+  return {
+    ...GAME_TEMPLATES,
+    ...customTemplates,
+  };
+}
+
+function getTemplateChoices(customTemplates = {}) {
+  return Object.values(getAllTemplates(customTemplates)).map((template) => ({
     name: template.name,
     value: template.key,
   }));
@@ -52,5 +59,6 @@ function getTemplateChoices() {
 
 module.exports = {
   GAME_TEMPLATES,
+  getAllTemplates,
   getTemplateChoices,
 };
