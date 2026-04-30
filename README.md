@@ -5,6 +5,8 @@ A small Discord bot for organizing game invites with reusable templates, queue b
 ## Features
 
 - `/invite` creates a queue post from a game template
+- `/invite` supports an optional `time` in `HH:mm` format
+- `/creategame` creates the same kind of queue post using a more direct command name
 - Players join the main queue with a button
 - Extra players can join the overflow / non-priority lane with a separate button
 - `/setrole` sets which role gets pinged for each game template
@@ -12,7 +14,8 @@ A small Discord bot for organizing game invites with reusable templates, queue b
 
 ## Commands
 
-- `/invite game:apex note:ranked size:3`
+- `/invite game:apex note:ranked time:19:30 size:3`
+- `/creategame game:apex note:ranked size:3`
 - `/setrole game:apex role:@Apex`
 - `/queueconfig`
 

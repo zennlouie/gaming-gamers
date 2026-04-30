@@ -28,6 +28,7 @@ const data = loadData();
 const client = new Client({
   intents: [GatewayIntentBits.Guilds],
 });
+const AUTO_REINVITE_INTERVAL_MS = 30 * 1000;
 
 function makeQueueId(queueId) {
   return `queue:${queueId}`;
@@ -59,6 +60,53 @@ function isQueueReady(queue) {
   return getJoinedUserIds(queue).length >= queue.targetSize;
 }
 
+function formatQueueTime(queue) {
+  if (!queue.scheduledFor) {
+    return 'Now';
+  }
+
+  const scheduledDate = new Date(queue.scheduledFor);
+  if (Number.isNaN(scheduledDate.getTime())) {
+    return 'Now';
+  }
+
+  return new Intl.DateTimeFormat('en-PH', {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(scheduledDate);
+}
+
+function parseScheduledTime(input) {
+  if (!input) {
+    return null;
+  }
+
+  const match = input.trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) {
+    return null;
+  }
+
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+
+  if (hours > 23 || minutes > 59) {
+    return null;
+  }
+
+  const now = new Date();
+  const scheduled = new Date(now);
+  scheduled.setSeconds(0, 0);
+  scheduled.setHours(hours, minutes, 0, 0);
+
+  if (scheduled.getTime() < now.getTime()) {
+    scheduled.setDate(scheduled.getDate() + 1);
+  }
+
+  return scheduled;
+}
+
 function buildQueueEmbed(queue) {
   const template = getTemplateByKey(queue.templateKey);
   const filled = `${getJoinedUserIds(queue).length}/${queue.targetSize}`;
@@ -69,6 +117,7 @@ function buildQueueEmbed(queue) {
     .setColor(0xf97316)
     .addFields(
       { name: 'WALANG TRABAHONG NAG AYA', value: `<@${queue.hostUserId}>`, inline: true },
+      { name: 'Game Time', value: formatQueueTime(queue), inline: true },
       { name: 'Queue Size', value: filled, inline: true },
       { name: 'Status', value: isQueueReady(queue) ? 'Ready / Full' : 'Looking for players', inline: true },
       { name: 'Queue', value: formatUsers(queue.primaryUsers), inline: false },
@@ -98,8 +147,16 @@ function buildQueueComponents(queue) {
         .setCustomId(`${messageKey}:leave`)
         .setLabel('Leave Queue')
         .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId(`${messageKey}:reinvite`)
+        .setLabel('Reinvite')
+        .setStyle(ButtonStyle.Danger),
     ),
   ];
+}
+
+function buildAllowedMentions(queue) {
+  return { roles: queue.roleMention ? [queue.roleMention.replace(/\D/g, '')] : [] };
 }
 
 async function syncQueueMessage(queue) {
@@ -114,11 +171,78 @@ async function syncQueueMessage(queue) {
       content: queue.roleMention || null,
       embeds: [buildQueueEmbed(queue)],
       components: buildQueueComponents(queue),
-      allowedMentions: { roles: queue.roleMention ? [queue.roleMention.replace(/\D/g, '')] : [] },
+      allowedMentions: buildAllowedMentions(queue),
     });
   } catch (error) {
     console.error('Failed to sync queue message', error);
   }
+}
+
+async function resendQueueInvite(queue) {
+  const channel = await client.channels.fetch(queue.channelId);
+  if (!channel?.isTextBased()) {
+    throw new Error('Queue channel is not text based.');
+  }
+
+  const previousMessageId = queue.messageId;
+  const resentMessage = await channel.send({
+    content: queue.roleMention || undefined,
+    embeds: [buildQueueEmbed(queue)],
+    components: buildQueueComponents(queue),
+    allowedMentions: buildAllowedMentions(queue),
+  });
+
+  queue.messageId = resentMessage.id;
+
+  if (previousMessageId && previousMessageId !== resentMessage.id) {
+    try {
+      const previousMessage = await channel.messages.fetch(previousMessageId);
+      await previousMessage.edit({
+        content: 'Invite moved to the latest reinvite.',
+        embeds: [buildQueueEmbed(queue)],
+        components: [],
+        allowedMentions: { roles: [] },
+      });
+    } catch (error) {
+      console.error('Failed to archive previous queue message', error);
+    }
+  }
+
+  return resentMessage;
+}
+
+async function handleScheduledReinvite(queue) {
+  if (!queue.shouldAutoReinvite || queue.autoReinvitedAt || !queue.scheduledFor) {
+    return;
+  }
+
+  const scheduledAt = new Date(queue.scheduledFor);
+  if (Number.isNaN(scheduledAt.getTime()) || scheduledAt.getTime() > Date.now()) {
+    return;
+  }
+
+  queue.autoReinvitedAt = new Date().toISOString();
+
+  if (isQueueReady(queue)) {
+    saveData(data);
+    return;
+  }
+
+  try {
+    await resendQueueInvite(queue);
+    saveData(data);
+  } catch (error) {
+    queue.autoReinvitedAt = null;
+    console.error('Failed to auto-reinvite queue', error);
+  }
+}
+
+function startAutoReinviteLoop() {
+  setInterval(() => {
+    Object.values(data.queues).forEach((queue) => {
+      void handleScheduledReinvite(queue);
+    });
+  }, AUTO_REINVITE_INTERVAL_MS);
 }
 
 async function announceQueueReady(queue) {
@@ -164,6 +288,67 @@ function addUserToQueue(queue, userId, lane) {
   return 'No change made.';
 }
 
+async function createQueueFromCommand(interaction) {
+  const templateKey = interaction.options.getString('game', true);
+  const template = getTemplateByKey(templateKey);
+
+  if (!template) {
+    await interaction.reply({
+      content: 'That game template no longer exists. Restart the bot and try the updated slash command.',
+      ephemeral: true,
+    });
+    return;
+  }
+
+  const note = interaction.options.getString('note') || '';
+  const size = interaction.options.getInteger('size') || template.size;
+  const timeInput = interaction.options.getString('time');
+  const scheduledDate = timeInput ? parseScheduledTime(timeInput) : new Date();
+
+  if (timeInput && !scheduledDate) {
+    await interaction.reply({
+      content: 'Time must be in `HH:mm` 24-hour format, like `19:30`.',
+      ephemeral: true,
+    });
+    return;
+  }
+
+  const roleId = data.roleMappings[interaction.guildId]?.[template.key] || null;
+  const roleMention = roleId ? `<@&${roleId}>` : null;
+
+  const queue = {
+    queueId: createQueueId(),
+    templateKey: template.key,
+    hostUserId: interaction.user.id,
+    guildId: interaction.guildId,
+    channelId: interaction.channelId,
+    messageId: null,
+    targetSize: size,
+    note,
+    primaryUsers: [interaction.user.id],
+    secondaryUsers: [],
+    createdAt: new Date().toISOString(),
+    scheduledFor: scheduledDate.toISOString(),
+    shouldAutoReinvite: Boolean(timeInput),
+    autoReinvitedAt: null,
+    roleMention,
+    readyAnnounced: false,
+  };
+
+  const reply = await interaction.reply({
+    content: roleMention || undefined,
+    embeds: [buildQueueEmbed(queue)],
+    components: buildQueueComponents(queue),
+    allowedMentions: { roles: roleId ? [roleId] : [] },
+    fetchReply: true,
+  });
+
+  queue.messageId = reply.id;
+
+  data.queues[makeQueueId(queue.queueId)] = queue;
+  saveData(data);
+}
+
 function buildCommands() {
   const templateChoices = getTemplateChoices();
 
@@ -182,6 +367,42 @@ function buildCommands() {
         option
           .setName('note')
           .setDescription('Optional details like mode, rank, map, or time')
+          .setRequired(false),
+      )
+      .addStringOption((option) =>
+        option
+          .setName('time')
+          .setDescription('Optional game time in 24-hour HH:mm format')
+          .setRequired(false),
+      )
+      .addIntegerOption((option) =>
+        option
+          .setName('size')
+          .setDescription('Override the default team size for this queue')
+          .setRequired(false)
+          .setMinValue(1)
+          .setMaxValue(20),
+      ),
+    new SlashCommandBuilder()
+      .setName('creategame')
+      .setDescription('Create a game queue from a template.')
+      .addStringOption((option) =>
+        option
+          .setName('game')
+          .setDescription('Which game template to use')
+          .setRequired(true)
+          .addChoices(...templateChoices),
+      )
+      .addStringOption((option) =>
+        option
+          .setName('note')
+          .setDescription('Optional details like mode, rank, map, or time')
+          .setRequired(false),
+      )
+      .addStringOption((option) =>
+        option
+          .setName('time')
+          .setDescription('Optional game time in 24-hour HH:mm format')
           .setRequired(false),
       )
       .addIntegerOption((option) =>
@@ -225,6 +446,7 @@ async function registerCommands() {
 client.once(Events.ClientReady, async (readyClient) => {
   console.log(`Logged in as ${readyClient.user.tag}`);
   await registerCommands();
+  startAutoReinviteLoop();
   console.log('Slash commands registered.');
 });
 
@@ -283,52 +505,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
-      if (interaction.commandName === 'invite') {
-        const templateKey = interaction.options.getString('game', true);
-        const template = getTemplateByKey(templateKey);
-
-        if (!template) {
-          await interaction.reply({
-            content: 'That game template no longer exists. Restart the bot and try the updated slash command.',
-            ephemeral: true,
-          });
-          return;
-        }
-
-        const note = interaction.options.getString('note') || '';
-        const size = interaction.options.getInteger('size') || template.size;
-        const roleId = data.roleMappings[interaction.guildId]?.[template.key] || null;
-        const roleMention = roleId ? `<@&${roleId}>` : null;
-
-        const queue = {
-          queueId: createQueueId(),
-          templateKey: template.key,
-          hostUserId: interaction.user.id,
-          guildId: interaction.guildId,
-          channelId: interaction.channelId,
-          messageId: null,
-          targetSize: size,
-          note,
-          primaryUsers: [interaction.user.id],
-          secondaryUsers: [],
-          createdAt: new Date().toISOString(),
-          roleMention,
-          readyAnnounced: false,
-        };
-
-        const reply = await interaction.reply({
-          content: roleMention || undefined,
-          embeds: [buildQueueEmbed(queue)],
-          components: buildQueueComponents(queue),
-          allowedMentions: { roles: roleId ? [roleId] : [] },
-          fetchReply: true,
-        });
-
-        queue.messageId = reply.id;
-
-        data.queues[makeQueueId(queue.queueId)] = queue;
-        saveData(data);
-
+      if (interaction.commandName === 'invite' || interaction.commandName === 'creategame') {
+        await createQueueFromCommand(interaction);
         return;
       }
     }
@@ -356,6 +534,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       let feedback = 'No change made.';
       const wasReady = isQueueReady(queue);
+
+      if (lane === 'reinvite') {
+        await resendQueueInvite(queue);
+        saveData(data);
+
+        await interaction.reply({
+          content: 'Invite resent and role pinged again.',
+          ephemeral: true,
+        });
+        return;
+      }
 
       if (lane === 'leave') {
         removeUserFromQueue(queue, interaction.user.id);

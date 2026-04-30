@@ -25,7 +25,7 @@ const GAME_TEMPLATES = {
     name: 'ARAM',
     size: 5,
     primaryButtonLabel: 'Join Queue',
-    secondaryButtonLabel: 'Join Backup',
+    secondaryButtonLabel: 'Join Sub',
   },
   arena: {
     key: 'arena',
