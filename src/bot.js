@@ -107,6 +107,35 @@ function parseScheduledTime(input) {
   return scheduled;
 }
 
+function buildHelpMessage() {
+  const templateList = Object.values(GAME_TEMPLATES)
+    .map((template) => `\`${template.key}\``)
+    .join(', ');
+
+  return [
+    '**Gaming Gamers Help**',
+    '',
+    '`/invite game:<template> note:<optional> time:<HH:mm> size:<optional>`',
+    'Creates a queue post and pings the configured role for that game.',
+    '',
+    '`/creategame game:<template> note:<optional> time:<HH:mm> size:<optional>`',
+    'Creates the same queue post as `/invite`.',
+    '',
+    '`/setrole game:<template> role:@Role`',
+    'Sets which role gets pinged for a game template.',
+    '',
+    '`/queueconfig`',
+    'Shows the current role mapping for each game.',
+    '',
+    '`Join Queue` adds you to the main lineup.',
+    '`Join Sub` adds you as a sub.',
+    '`Reinvite` resends the current invite and pings the role again.',
+    'If `time` is set and the queue is still not full when that time arrives, the bot auto-reinvites once.',
+    '',
+    `Available templates: ${templateList}`,
+  ].join('\n');
+}
+
 function buildQueueEmbed(queue) {
   const template = getTemplateByKey(queue.templateKey);
   const filled = `${getJoinedUserIds(queue).length}/${queue.targetSize}`;
@@ -433,6 +462,9 @@ function buildCommands() {
     new SlashCommandBuilder()
       .setName('queueconfig')
       .setDescription('View the role mapping for all game templates.'),
+    new SlashCommandBuilder()
+      .setName('help')
+      .setDescription('Show the available commands and queue actions.'),
   ].map((command) => command.toJSON());
 }
 
@@ -500,6 +532,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         await interaction.reply({
           content: message,
+          ephemeral: true,
+        });
+        return;
+      }
+
+      if (interaction.commandName === 'help') {
+        await interaction.reply({
+          content: buildHelpMessage(),
           ephemeral: true,
         });
         return;
