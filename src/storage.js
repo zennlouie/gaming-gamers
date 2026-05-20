@@ -6,6 +6,7 @@ const dataFile = path.join(dataDir, 'bot-data.json');
 
 const defaultData = {
   roleMappings: {},
+  guildSettings: {},
   queues: {},
   customTemplates: {},
 };

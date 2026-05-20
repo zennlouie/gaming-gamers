@@ -5,8 +5,9 @@ A small Discord bot for organizing game invites with reusable templates, queue b
 ## Features
 
 - `/invite` creates a queue post from a game template
-- `/invite` supports an optional `time` in `HH:mm` format
+- `/invite` supports an optional `time` in `HH:mm` format using the server's configured timezone
 - `/creategame` adds a new game template that becomes available in `/invite`
+- `/settimezone` sets which timezone invite times use for the whole server
 - `/help` shows the available commands and queue button actions
 - Players join the main queue with a button
 - Extra players can join the overflow / non-priority lane with a separate button
@@ -16,6 +17,7 @@ A small Discord bot for organizing game invites with reusable templates, queue b
 ## Commands
 
 - `/invite game:apex note:ranked time:19:30 size:3`
+- `/settimezone timezone:GMT+8`
 - `/creategame name:"Marvel Rivals" size:6 key:marvel-rivals`
 - `/setrole game:apex role:@Apex`
 - `/queueconfig`

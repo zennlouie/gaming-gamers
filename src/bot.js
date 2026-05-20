@@ -29,6 +29,7 @@ const client = new Client({
   intents: [GatewayIntentBits.Guilds],
 });
 const AUTO_REINVITE_INTERVAL_MS = 30 * 1000;
+const DEFAULT_TIMEZONE_OFFSET_MINUTES = new Date().getTimezoneOffset() * -1;
 
 function makeQueueId(queueId) {
   return `queue:${queueId}`;
@@ -70,6 +71,54 @@ function isQueueReady(queue) {
   return getJoinedUserIds(queue).length >= queue.targetSize;
 }
 
+function formatTimezoneLabel(offsetMinutes) {
+  const sign = offsetMinutes >= 0 ? '+' : '-';
+  const absoluteMinutes = Math.abs(offsetMinutes);
+  const hours = Math.floor(absoluteMinutes / 60);
+  const minutes = absoluteMinutes % 60;
+
+  if (minutes === 0) {
+    return `GMT${sign}${hours}`;
+  }
+
+  return `GMT${sign}${hours}:${String(minutes).padStart(2, '0')}`;
+}
+
+function parseTimezoneOffset(input) {
+  if (!input) {
+    return null;
+  }
+
+  const normalized = input.trim().toUpperCase().replace(/^UTC/, 'GMT');
+  const match = normalized.match(/^GMT\s*([+-])\s*(\d{1,2})(?::?(\d{2}))?$/);
+  if (!match) {
+    return null;
+  }
+
+  const hours = Number(match[2]);
+  const minutes = Number(match[3] || '0');
+
+  if (hours > 14 || minutes > 59) {
+    return null;
+  }
+
+  const totalMinutes = (hours * 60) + minutes;
+  return match[1] === '+' ? totalMinutes : -totalMinutes;
+}
+
+function getGuildSettings(guildId) {
+  if (!guildId) {
+    return {};
+  }
+
+  return data.guildSettings[guildId] || {};
+}
+
+function getGuildTimezoneOffsetMinutes(guildId) {
+  const configuredOffset = getGuildSettings(guildId).timezoneOffsetMinutes;
+  return Number.isInteger(configuredOffset) ? configuredOffset : DEFAULT_TIMEZONE_OFFSET_MINUTES;
+}
+
 function formatQueueTime(queue) {
   if (!queue.scheduledFor) {
     return 'Now';
@@ -80,15 +129,24 @@ function formatQueueTime(queue) {
     return 'Now';
   }
 
-  return new Intl.DateTimeFormat('en-PH', {
-    month: 'short',
-    day: 'numeric',
+  const offsetMinutes = Number.isInteger(queue.timezoneOffsetMinutes)
+    ? queue.timezoneOffsetMinutes
+    : DEFAULT_TIMEZONE_OFFSET_MINUTES;
+  const timezoneLabel = queue.timezoneLabel || formatTimezoneLabel(offsetMinutes);
+  const shiftedDate = new Date(scheduledDate.getTime() + (offsetMinutes * 60 * 1000));
+  const month = shiftedDate.toLocaleString('en-US', { month: 'short', timeZone: 'UTC' });
+  const day = shiftedDate.toLocaleString('en-US', { day: 'numeric', timeZone: 'UTC' });
+  const time = shiftedDate.toLocaleString('en-US', {
     hour: 'numeric',
     minute: '2-digit',
-  }).format(scheduledDate);
+    hour12: true,
+    timeZone: 'UTC',
+  });
+
+  return `${month} ${day}, ${time} ${timezoneLabel}`;
 }
 
-function parseScheduledTime(input) {
+function parseScheduledTime(input, offsetMinutes = DEFAULT_TIMEZONE_OFFSET_MINUTES) {
   if (!input) {
     return null;
   }
@@ -106,15 +164,25 @@ function parseScheduledTime(input) {
   }
 
   const now = new Date();
-  const scheduled = new Date(now);
-  scheduled.setSeconds(0, 0);
-  scheduled.setHours(hours, minutes, 0, 0);
+  const timezoneNow = new Date(now.getTime() + (offsetMinutes * 60 * 1000));
+  const scheduledYear = timezoneNow.getUTCFullYear();
+  const scheduledMonth = timezoneNow.getUTCMonth();
+  const scheduledDay = timezoneNow.getUTCDate();
+  let scheduledUtcMs = Date.UTC(
+    scheduledYear,
+    scheduledMonth,
+    scheduledDay,
+    hours,
+    minutes,
+    0,
+    0,
+  ) - (offsetMinutes * 60 * 1000);
 
-  if (scheduled.getTime() < now.getTime()) {
-    scheduled.setDate(scheduled.getDate() + 1);
+  if (scheduledUtcMs < now.getTime()) {
+    scheduledUtcMs += 24 * 60 * 60 * 1000;
   }
 
-  return scheduled;
+  return new Date(scheduledUtcMs);
 }
 
 function buildHelpMessage() {
@@ -127,6 +195,9 @@ function buildHelpMessage() {
     '',
     '`/invite game:<template> note:<optional> time:<HH:mm> size:<optional>`',
     'Creates a queue post and pings the configured role for that game.',
+    '',
+    '`/settimezone timezone:<GMT+8>`',
+    'Sets the timezone used for invite times in this server.',
     '',
     '`/creategame name:<game name> size:<players> key:<optional>`',
     'Adds a new game template that becomes available in `/invite`.',
@@ -149,6 +220,11 @@ function buildHelpMessage() {
 function buildQueueEmbed(queue) {
   const template = getTemplateByKey(queue.templateKey);
   const filled = `${getJoinedUserIds(queue).length}/${queue.targetSize}`;
+  const reinviteValue = queue.lastReinvitedByUserId
+    ? `<@${queue.lastReinvitedByUserId}>`
+    : queue.autoReinvitedAt
+      ? 'Auto-reinvited by the bot'
+      : null;
 
   const embed = new EmbedBuilder()
     .setTitle(`${template.name} Queue`)
@@ -159,6 +235,7 @@ function buildQueueEmbed(queue) {
       { name: 'Game Time', value: formatQueueTime(queue), inline: true },
       { name: 'Queue Size', value: filled, inline: true },
       { name: 'Status', value: isQueueReady(queue) ? 'Ready / Full' : 'Looking for players', inline: true },
+      ...(reinviteValue ? [{ name: 'Reinvited By', value: reinviteValue, inline: true }] : []),
       { name: 'Queue', value: formatUsers(queue.primaryUsers), inline: false },
       { name: 'SUB', value: formatUsers(queue.secondaryUsers), inline: false },
     )
@@ -217,12 +294,13 @@ async function syncQueueMessage(queue) {
   }
 }
 
-async function resendQueueInvite(queue) {
+async function resendQueueInvite(queue, reinvitedByUserId = null) {
   const channel = await client.channels.fetch(queue.channelId);
   if (!channel?.isTextBased()) {
     throw new Error('Queue channel is not text based.');
   }
 
+  queue.lastReinvitedByUserId = reinvitedByUserId;
   const previousMessageId = queue.messageId;
   const resentMessage = await channel.send({
     content: queue.roleMention || undefined,
@@ -342,11 +420,13 @@ async function createQueueFromCommand(interaction) {
   const note = interaction.options.getString('note') || '';
   const size = interaction.options.getInteger('size') || template.size;
   const timeInput = interaction.options.getString('time');
-  const scheduledDate = timeInput ? parseScheduledTime(timeInput) : new Date();
+  const timezoneOffsetMinutes = getGuildTimezoneOffsetMinutes(interaction.guildId);
+  const timezoneLabel = formatTimezoneLabel(timezoneOffsetMinutes);
+  const scheduledDate = timeInput ? parseScheduledTime(timeInput, timezoneOffsetMinutes) : new Date();
 
   if (timeInput && !scheduledDate) {
     await interaction.reply({
-      content: 'Time must be in `HH:mm` 24-hour format, like `19:30`.',
+      content: `Time must be in \`HH:mm\` 24-hour format, like \`19:30\`. It will be interpreted as ${timezoneLabel}.`,
       ephemeral: true,
     });
     return;
@@ -368,6 +448,8 @@ async function createQueueFromCommand(interaction) {
     secondaryUsers: [],
     createdAt: new Date().toISOString(),
     scheduledFor: scheduledDate.toISOString(),
+    timezoneOffsetMinutes,
+    timezoneLabel,
     shouldAutoReinvite: Boolean(timeInput),
     autoReinvitedAt: null,
     roleMention,
@@ -427,6 +509,31 @@ async function createTemplateFromCommand(interaction) {
   });
 }
 
+async function setTimezoneFromCommand(interaction) {
+  const timezoneInput = interaction.options.getString('timezone', true);
+  const timezoneOffsetMinutes = parseTimezoneOffset(timezoneInput);
+
+  if (timezoneOffsetMinutes === null) {
+    await interaction.reply({
+      content: 'Timezone must look like `GMT+8`, `GMT-5`, or `GMT+5:30`.',
+      ephemeral: true,
+    });
+    return;
+  }
+
+  if (!data.guildSettings[interaction.guildId]) {
+    data.guildSettings[interaction.guildId] = {};
+  }
+
+  data.guildSettings[interaction.guildId].timezoneOffsetMinutes = timezoneOffsetMinutes;
+  saveData(data);
+
+  await interaction.reply({
+    content: `All new invites in this server will now use **${formatTimezoneLabel(timezoneOffsetMinutes)}**.`,
+    ephemeral: true,
+  });
+}
+
 function buildCommands() {
   const templateChoices = getTemplateChoices(data.customTemplates);
 
@@ -450,7 +557,7 @@ function buildCommands() {
       .addStringOption((option) =>
         option
           .setName('time')
-          .setDescription('Optional game time in 24-hour HH:mm format')
+          .setDescription('Optional game time in 24-hour HH:mm format using this server timezone')
           .setRequired(false),
       )
       .addIntegerOption((option) =>
@@ -460,6 +567,16 @@ function buildCommands() {
           .setRequired(false)
           .setMinValue(1)
           .setMaxValue(20),
+      ),
+    new SlashCommandBuilder()
+      .setName('settimezone')
+      .setDescription('Set the timezone used for invite times in this server.')
+      .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+      .addStringOption((option) =>
+        option
+          .setName('timezone')
+          .setDescription('Examples: GMT+8, GMT-5, GMT+5:30')
+          .setRequired(true),
       ),
     new SlashCommandBuilder()
       .setName('creategame')
@@ -562,6 +679,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       if (interaction.commandName === 'queueconfig') {
         const guildRoleMappings = data.roleMappings[interaction.guildId] || {};
+        const timezoneLabel = formatTimezoneLabel(getGuildTimezoneOffsetMinutes(interaction.guildId));
         const lines = Object.values(getAllTemplates(data.customTemplates)).map((template) => {
           const roleId = guildRoleMappings[template.key];
           return roleId
@@ -570,6 +688,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         });
         const message = [
           '**Queue role config**',
+          `Timezone: **${timezoneLabel}**`,
           ...lines,
         ].join('\n');
 
@@ -590,6 +709,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       if (interaction.commandName === 'creategame') {
         await createTemplateFromCommand(interaction);
+        return;
+      }
+
+      if (interaction.commandName === 'settimezone') {
+        await setTimezoneFromCommand(interaction);
         return;
       }
 
@@ -624,7 +748,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const wasReady = isQueueReady(queue);
 
       if (lane === 'reinvite') {
-        await resendQueueInvite(queue);
+        await resendQueueInvite(queue, interaction.user.id);
         saveData(data);
 
         await interaction.reply({
