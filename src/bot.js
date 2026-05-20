@@ -211,6 +211,7 @@ function buildHelpMessage() {
     '`Join Queue` adds you to the main lineup.',
     '`Join Sub` adds you as a sub.',
     '`Reinvite` resends the current invite and pings the role again.',
+    '`Cancel Invite` removes the queue, and only the host can use it.',
     'If `time` is set and the queue is still not full when that time arrives, the bot auto-reinvites once.',
     '',
     `Available templates: ${templateList}`,
@@ -225,6 +226,11 @@ function buildQueueEmbed(queue) {
     : queue.autoReinvitedAt
       ? 'Auto-reinvited by the bot'
       : null;
+  const statusValue = queue.canceledAt
+    ? `Canceled by <@${queue.canceledByUserId || queue.hostUserId}>`
+    : isQueueReady(queue)
+      ? 'Ready / Full'
+      : 'Looking for players';
 
   const embed = new EmbedBuilder()
     .setTitle(`${template.name} Queue`)
@@ -234,7 +240,7 @@ function buildQueueEmbed(queue) {
       { name: 'WALANG TRABAHONG NAG AYA', value: `<@${queue.hostUserId}>`, inline: true },
       { name: 'Game Time', value: formatQueueTime(queue), inline: true },
       { name: 'Queue Size', value: filled, inline: true },
-      { name: 'Status', value: isQueueReady(queue) ? 'Ready / Full' : 'Looking for players', inline: true },
+      { name: 'Status', value: statusValue, inline: true },
       ...(reinviteValue ? [{ name: 'Reinvited By', value: reinviteValue, inline: true }] : []),
       { name: 'Queue', value: formatUsers(queue.primaryUsers), inline: false },
       { name: 'SUB', value: formatUsers(queue.secondaryUsers), inline: false },
@@ -267,6 +273,10 @@ function buildQueueComponents(queue) {
         .setCustomId(`${messageKey}:reinvite`)
         .setLabel('Reinvite')
         .setStyle(ButtonStyle.Danger),
+      new ButtonBuilder()
+        .setCustomId(`${messageKey}:cancel`)
+        .setLabel('Cancel Invite')
+        .setStyle(ButtonStyle.Secondary),
     ),
   ];
 }
@@ -326,6 +336,27 @@ async function resendQueueInvite(queue, reinvitedByUserId = null) {
   }
 
   return resentMessage;
+}
+
+async function cancelQueueInvite(queue, canceledByUserId) {
+  const channel = await client.channels.fetch(queue.channelId);
+  if (!channel?.isTextBased()) {
+    throw new Error('Queue channel is not text based.');
+  }
+
+  queue.canceledAt = new Date().toISOString();
+  queue.canceledByUserId = canceledByUserId;
+  queue.shouldAutoReinvite = false;
+
+  const message = await channel.messages.fetch(queue.messageId);
+  await message.edit({
+    content: 'Invite canceled.',
+    embeds: [buildQueueEmbed(queue)],
+    components: [],
+    allowedMentions: { roles: [] },
+  });
+
+  delete data.queues[makeQueueId(queue.queueId)];
 }
 
 async function handleScheduledReinvite(queue) {
@@ -753,6 +784,25 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         await interaction.reply({
           content: 'Invite resent and role pinged again.',
+          ephemeral: true,
+        });
+        return;
+      }
+
+      if (lane === 'cancel') {
+        if (interaction.user.id !== queue.hostUserId) {
+          await interaction.reply({
+            content: 'Only the invite host can cancel this queue.',
+            ephemeral: true,
+          });
+          return;
+        }
+
+        await cancelQueueInvite(queue, interaction.user.id);
+        saveData(data);
+
+        await interaction.reply({
+          content: 'Invite canceled.',
           ephemeral: true,
         });
         return;
