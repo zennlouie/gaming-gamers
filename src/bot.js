@@ -211,6 +211,7 @@ function buildHelpMessage() {
     '`Join Queue` adds you to the main lineup.',
     '`Join Sub` adds you as a sub.',
     '`Reinvite` resends the current invite and pings the role again.',
+    '`Start Game` pings everyone currently in the queue, and only the host can use it.',
     '`Cancel Invite` removes the queue, and only the host can use it.',
     'If `time` is set and the queue is still not full when that time arrives, the bot auto-reinvites once.',
     '',
@@ -273,6 +274,10 @@ function buildQueueComponents(queue) {
         .setCustomId(`${messageKey}:reinvite`)
         .setLabel('Reinvite')
         .setStyle(ButtonStyle.Danger),
+      new ButtonBuilder()
+        .setCustomId(`${messageKey}:start`)
+        .setLabel('Start Game')
+        .setStyle(ButtonStyle.Success),
       new ButtonBuilder()
         .setCustomId(`${messageKey}:cancel`)
         .setLabel('Cancel Invite')
@@ -393,7 +398,7 @@ function startAutoReinviteLoop() {
   }, AUTO_REINVITE_INTERVAL_MS);
 }
 
-async function announceQueueReady(queue) {
+async function announceQueue(queue, messageText) {
   try {
     const channel = await client.channels.fetch(queue.channelId);
     if (!channel?.isTextBased()) {
@@ -405,14 +410,21 @@ async function announceQueueReady(queue) {
       return;
     }
 
-    const template = getTemplateByKey(queue.templateKey);
     await channel.send({
-      content: `${mentions} ${template ? `GAME NA MGA TANGA!!!` : 'GAME NA MGA TANGA!!!'}`,
+      content: `${mentions} ${messageText}`,
       allowedMentions: { users: getJoinedUserIds(queue) },
     });
   } catch (error) {
-    console.error('Failed to announce ready queue', error);
+    console.error('Failed to announce queue', error);
   }
+}
+
+async function announceQueueReady(queue) {
+  await announceQueue(queue, 'GAME NA MGA TANGA!!!');
+}
+
+async function announceQueueStart(queue, startedByUserId) {
+  await announceQueue(queue, `Game starting now, called by <@${startedByUserId}>!`);
 }
 
 function removeUserFromQueue(queue, userId) {
@@ -803,6 +815,23 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         await interaction.reply({
           content: 'Invite canceled.',
+          ephemeral: true,
+        });
+        return;
+      }
+
+      if (lane === 'start') {
+        if (interaction.user.id !== queue.hostUserId) {
+          await interaction.reply({
+            content: 'Only the invite host can start this queue.',
+            ephemeral: true,
+          });
+          return;
+        }
+
+        await announceQueueStart(queue, interaction.user.id);
+        await interaction.reply({
+          content: 'Queued players have been pinged to start.',
           ephemeral: true,
         });
         return;
