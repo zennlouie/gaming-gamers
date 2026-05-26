@@ -278,6 +278,8 @@ function buildQueueComponents(queue) {
         .setCustomId(`${messageKey}:start`)
         .setLabel('Start Game')
         .setStyle(ButtonStyle.Success),
+    ),
+    new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId(`${messageKey}:cancel`)
         .setLabel('Cancel Invite')
