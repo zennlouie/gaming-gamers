@@ -202,6 +202,9 @@ function buildHelpMessage() {
     '`/creategame name:<game name> size:<players> key:<optional>`',
     'Adds a new game template that becomes available in `/invite`.',
     '',
+    '`/removegame game:<template>`',
+    'Removes a custom game template when no active queue is using it.',
+    '',
     '`/setrole game:<template> role:@Role`',
     'Sets which role gets pinged for a game template.',
     '',
@@ -554,6 +557,44 @@ async function createTemplateFromCommand(interaction) {
   });
 }
 
+async function removeTemplateFromCommand(interaction) {
+  const templateKey = interaction.options.getString('game', true);
+  const template = getTemplateByKey(templateKey);
+
+  if (!template || !data.customTemplates[template.key]) {
+    await interaction.reply({
+      content: 'Only custom game templates can be removed.',
+      ephemeral: true,
+    });
+    return;
+  }
+
+  const activeQueue = Object.values(data.queues).find((queue) => queue.templateKey === template.key);
+  if (activeQueue) {
+    await interaction.reply({
+      content: `Cannot remove \`${template.key}\` while an active queue is using it.`,
+      ephemeral: true,
+    });
+    return;
+  }
+
+  delete data.customTemplates[template.key];
+
+  Object.values(data.roleMappings).forEach((guildRoleMappings) => {
+    if (guildRoleMappings) {
+      delete guildRoleMappings[template.key];
+    }
+  });
+
+  saveData(data);
+  await registerCommands();
+
+  await interaction.reply({
+    content: `Removed custom game template **${template.name}** (\`${template.key}\`).`,
+    ephemeral: true,
+  });
+}
+
 async function setTimezoneFromCommand(interaction) {
   const timezoneInput = interaction.options.getString('timezone', true);
   const timezoneOffsetMinutes = parseTimezoneOffset(timezoneInput);
@@ -646,6 +687,17 @@ function buildCommands() {
           .setName('key')
           .setDescription('Optional short key for slash commands, like marvel-rivals')
           .setRequired(false),
+      ),
+    new SlashCommandBuilder()
+      .setName('removegame')
+      .setDescription('Remove a custom game template.')
+      .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+      .addStringOption((option) =>
+        option
+          .setName('game')
+          .setDescription('Which custom game template to remove')
+          .setRequired(true)
+          .addChoices(...templateChoices),
       ),
     new SlashCommandBuilder()
       .setName('setrole')
@@ -754,6 +806,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       if (interaction.commandName === 'creategame') {
         await createTemplateFromCommand(interaction);
+        return;
+      }
+
+      if (interaction.commandName === 'removegame') {
+        await removeTemplateFromCommand(interaction);
         return;
       }
 

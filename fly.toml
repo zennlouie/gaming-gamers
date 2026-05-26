@@ -2,10 +2,15 @@ app = "gaming-gamers"
 primary_region = "sin"
 
 [env]
+  DATA_DIR = "/data"
   NODE_ENV = "production"
 
 [processes]
   app = "node index.js"
+
+[[mounts]]
+  source = "bot_data"
+  destination = "/data"
 
 [[vm]]
   cpu_kind = "shared"

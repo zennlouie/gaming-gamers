@@ -1,7 +1,10 @@
 const fs = require('fs');
 const path = require('path');
 
-const dataDir = path.join(process.cwd(), 'data');
+const configuredDataDir = process.env.DATA_DIR;
+const dataDir = configuredDataDir
+  ? path.resolve(configuredDataDir)
+  : path.join(process.cwd(), 'data');
 const dataFile = path.join(dataDir, 'bot-data.json');
 
 const defaultData = {

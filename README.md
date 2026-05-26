@@ -33,6 +33,20 @@ A small Discord bot for organizing game invites with reusable templates, queue b
 npm start
 ```
 
+## Fly.io Persistence
+
+Fly redeploys replace the app container filesystem, so custom games, role mappings, and queue settings will be lost unless you use a volume.
+
+1. Create a volume once in your Fly region:
+
+```bash
+fly volumes create bot_data --region sin --size 1
+```
+
+2. Deploy with the included `fly.toml`, which mounts that volume at `/data`.
+
+The bot will store `bot-data.json` in `DATA_DIR` when set, so on Fly your data will persist at `/data/bot-data.json` across redeploys.
+
 ## Current Templates
 
 - `apex`
