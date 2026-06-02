@@ -1,11 +1,13 @@
 # Gaming Gamers Discord Bot
 
-A small Discord bot for organizing game invites with reusable templates, queue buttons, and per-game ping roles.
+A small Discord bot for organizing game invites with reusable templates, queue buttons, and per-game ping roles. Invites can target one game or multiple games at once.
 
 ## Features
 
-- `/invite` creates a queue post from a game template
+- `/invite` creates a queue post from one or more game templates
+- `/invite` can ping every configured role for the selected games
 - `/invite` supports an optional `time` in `HH:mm` format using the server's configured timezone
+- If multiple games are selected and `size` is not provided, the queue uses the largest default size among those games
 - `/creategame` adds a new game template that becomes available in `/invite`
 - `/settimezone` sets which timezone invite times use for the whole server
 - `/help` shows the available commands and queue button actions
@@ -17,6 +19,7 @@ A small Discord bot for organizing game invites with reusable templates, queue b
 ## Commands
 
 - `/invite game:apex note:ranked time:19:30 size:3`
+- `/invite game:apex game2:valorant note:flex`
 - `/settimezone timezone:GMT+8`
 - `/creategame name:"Marvel Rivals" size:6 key:marvel-rivals`
 - `/setrole game:apex role:@Apex`

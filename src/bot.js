@@ -51,6 +51,38 @@ function getTemplateByKey(templateKey) {
   );
 }
 
+function getQueueTemplateKeys(queue) {
+  if (Array.isArray(queue.templateKeys) && queue.templateKeys.length) {
+    return queue.templateKeys;
+  }
+
+  return queue.templateKey ? [queue.templateKey] : [];
+}
+
+function getQueueTemplates(queue) {
+  return getQueueTemplateKeys(queue)
+    .map((templateKey) => getTemplateByKey(templateKey))
+    .filter(Boolean);
+}
+
+function getQueueDisplayName(queue) {
+  const templates = getQueueTemplates(queue);
+
+  if (!templates.length) {
+    return 'Game';
+  }
+
+  return templates.map((template) => template.name).join(' / ');
+}
+
+function getQueueRoleMentions(queue) {
+  if (Array.isArray(queue.roleMentions)) {
+    return queue.roleMentions.filter(Boolean);
+  }
+
+  return queue.roleMention ? [queue.roleMention] : [];
+}
+
 function normalizeTemplateKey(value) {
   return value
     .trim()
@@ -193,8 +225,9 @@ function buildHelpMessage() {
   return [
     '**Gaming Gamers Help**',
     '',
-    '`/invite game:<template> note:<optional> time:<HH:mm> size:<optional>`',
-    'Creates a queue post and pings the configured role for that game.',
+    '`/invite game:<template> game2:<optional> game3:<optional> game4:<optional> game5:<optional> note:<optional> time:<HH:mm> size:<optional>`',
+    'Creates a queue post, can include multiple games, and pings each configured game role.',
+    'If you pick multiple games and do not set `size`, the queue uses the largest default size among those games.',
     '',
     '`/settimezone timezone:<GMT+8>`',
     'Sets the timezone used for invite times in this server.',
@@ -223,7 +256,8 @@ function buildHelpMessage() {
 }
 
 function buildQueueEmbed(queue) {
-  const template = getTemplateByKey(queue.templateKey);
+  const templateKeys = getQueueTemplateKeys(queue);
+  const templateLabel = getQueueDisplayName(queue);
   const filled = `${getJoinedUserIds(queue).length}/${queue.targetSize}`;
   const reinviteValue = queue.lastReinvitedByUserId
     ? `<@${queue.lastReinvitedByUserId}>`
@@ -237,37 +271,40 @@ function buildQueueEmbed(queue) {
       : 'Looking for players';
 
   const embed = new EmbedBuilder()
-    .setTitle(`${template.name} Queue`)
+    .setTitle(`${templateLabel} Queue`)
     .setDescription(queue.note || null)
     .setColor(0xf97316)
     .addFields(
       { name: 'WALANG TRABAHONG NAG AYA', value: `<@${queue.hostUserId}>`, inline: true },
       { name: 'Game Time', value: formatQueueTime(queue), inline: true },
       { name: 'Queue Size', value: filled, inline: true },
+      { name: 'Games', value: templateLabel, inline: false },
       { name: 'Status', value: statusValue, inline: true },
       ...(reinviteValue ? [{ name: 'Reinvited By', value: reinviteValue, inline: true }] : []),
       { name: 'Queue', value: formatUsers(queue.primaryUsers), inline: false },
       { name: 'SUB', value: formatUsers(queue.secondaryUsers), inline: false },
     )
-    .setFooter({ text: `Template: ${template.key}` })
+    .setFooter({ text: `Template: ${templateKeys.join(', ')}` })
     .setTimestamp(new Date(queue.createdAt));
 
   return embed;
 }
 
 function buildQueueComponents(queue) {
-  const template = getTemplateByKey(queue.templateKey);
+  const templates = getQueueTemplates(queue);
+  const primaryButtonLabel = templates[0]?.primaryButtonLabel || 'Join Queue';
+  const secondaryButtonLabel = templates[0]?.secondaryButtonLabel || 'Join Sub';
   const messageKey = makeQueueId(queue.queueId);
 
   return [
     new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId(`${messageKey}:primary`)
-        .setLabel(template.primaryButtonLabel)
+        .setLabel(primaryButtonLabel)
         .setStyle(ButtonStyle.Success),
       new ButtonBuilder()
         .setCustomId(`${messageKey}:secondary`)
-        .setLabel(template.secondaryButtonLabel)
+        .setLabel(secondaryButtonLabel)
         .setStyle(ButtonStyle.Primary),
       new ButtonBuilder()
         .setCustomId(`${messageKey}:leave`)
@@ -292,7 +329,9 @@ function buildQueueComponents(queue) {
 }
 
 function buildAllowedMentions(queue) {
-  return { roles: queue.roleMention ? [queue.roleMention.replace(/\D/g, '')] : [] };
+  return {
+    roles: getQueueRoleMentions(queue).map((roleMention) => roleMention.replace(/\D/g, '')),
+  };
 }
 
 async function syncQueueMessage(queue) {
@@ -304,7 +343,7 @@ async function syncQueueMessage(queue) {
 
     const message = await channel.messages.fetch(queue.messageId);
     await message.edit({
-      content: queue.roleMention || null,
+      content: getQueueRoleMentions(queue).join(' ') || null,
       embeds: [buildQueueEmbed(queue)],
       components: buildQueueComponents(queue),
       allowedMentions: buildAllowedMentions(queue),
@@ -323,7 +362,7 @@ async function resendQueueInvite(queue, reinvitedByUserId = null) {
   queue.lastReinvitedByUserId = reinvitedByUserId;
   const previousMessageId = queue.messageId;
   const resentMessage = await channel.send({
-    content: queue.roleMention || undefined,
+    content: getQueueRoleMentions(queue).join(' ') || undefined,
     embeds: [buildQueueEmbed(queue)],
     components: buildQueueComponents(queue),
     allowedMentions: buildAllowedMentions(queue),
@@ -454,10 +493,17 @@ function addUserToQueue(queue, userId, lane) {
 }
 
 async function createQueueFromCommand(interaction) {
-  const templateKey = interaction.options.getString('game', true);
-  const template = getTemplateByKey(templateKey);
+  const selectedTemplateKeys = [
+    interaction.options.getString('game', true),
+    interaction.options.getString('game2'),
+    interaction.options.getString('game3'),
+    interaction.options.getString('game4'),
+    interaction.options.getString('game5'),
+  ].filter(Boolean);
+  const uniqueTemplateKeys = [...new Set(selectedTemplateKeys)];
+  const templates = uniqueTemplateKeys.map((templateKey) => getTemplateByKey(templateKey));
 
-  if (!template) {
+  if (templates.some((template) => !template)) {
     await interaction.reply({
       content: 'That game template no longer exists. Restart the bot and try the updated slash command.',
       ephemeral: true,
@@ -466,7 +512,8 @@ async function createQueueFromCommand(interaction) {
   }
 
   const note = interaction.options.getString('note') || '';
-  const size = interaction.options.getInteger('size') || template.size;
+  const largestTemplateSize = Math.max(...templates.map((template) => template.size));
+  const size = interaction.options.getInteger('size') || largestTemplateSize;
   const timeInput = interaction.options.getString('time');
   const timezoneOffsetMinutes = getGuildTimezoneOffsetMinutes(interaction.guildId);
   const timezoneLabel = formatTimezoneLabel(timezoneOffsetMinutes);
@@ -480,12 +527,16 @@ async function createQueueFromCommand(interaction) {
     return;
   }
 
-  const roleId = data.roleMappings[interaction.guildId]?.[template.key] || null;
-  const roleMention = roleId ? `<@&${roleId}>` : null;
+  const roleIds = uniqueTemplateKeys
+    .map((templateKey) => data.roleMappings[interaction.guildId]?.[templateKey] || null)
+    .filter(Boolean);
+  const uniqueRoleIds = [...new Set(roleIds)];
+  const roleMentions = uniqueRoleIds.map((roleId) => `<@&${roleId}>`);
 
   const queue = {
     queueId: createQueueId(),
-    templateKey: template.key,
+    templateKey: uniqueTemplateKeys[0],
+    templateKeys: uniqueTemplateKeys,
     hostUserId: interaction.user.id,
     guildId: interaction.guildId,
     channelId: interaction.channelId,
@@ -500,15 +551,16 @@ async function createQueueFromCommand(interaction) {
     timezoneLabel,
     shouldAutoReinvite: Boolean(timeInput),
     autoReinvitedAt: null,
-    roleMention,
+    roleMention: roleMentions[0] || null,
+    roleMentions,
     readyAnnounced: false,
   };
 
   const reply = await interaction.reply({
-    content: roleMention || undefined,
+    content: roleMentions.join(' ') || undefined,
     embeds: [buildQueueEmbed(queue)],
     components: buildQueueComponents(queue),
-    allowedMentions: { roles: roleId ? [roleId] : [] },
+    allowedMentions: { roles: uniqueRoleIds },
     fetchReply: true,
   });
 
@@ -569,8 +621,10 @@ async function removeTemplateFromCommand(interaction) {
     return;
   }
 
-  const activeQueue = Object.values(data.queues).find((queue) => queue.templateKey === template.key);
-  if (activeQueue) {
+  const activeQueueUsingTemplate = Object.values(data.queues).find((queue) =>
+    getQueueTemplateKeys(queue).includes(template.key),
+  );
+  if (activeQueueUsingTemplate) {
     await interaction.reply({
       content: `Cannot remove \`${template.key}\` while an active queue is using it.`,
       ephemeral: true,
@@ -630,8 +684,36 @@ function buildCommands() {
       .addStringOption((option) =>
         option
           .setName('game')
-          .setDescription('Which game template to use')
+          .setDescription('Primary game template to use')
           .setRequired(true)
+          .addChoices(...templateChoices),
+      )
+      .addStringOption((option) =>
+        option
+          .setName('game2')
+          .setDescription('Optional second game template')
+          .setRequired(false)
+          .addChoices(...templateChoices),
+      )
+      .addStringOption((option) =>
+        option
+          .setName('game3')
+          .setDescription('Optional third game template')
+          .setRequired(false)
+          .addChoices(...templateChoices),
+      )
+      .addStringOption((option) =>
+        option
+          .setName('game4')
+          .setDescription('Optional fourth game template')
+          .setRequired(false)
+          .addChoices(...templateChoices),
+      )
+      .addStringOption((option) =>
+        option
+          .setName('game5')
+          .setDescription('Optional fifth game template')
+          .setRequired(false)
           .addChoices(...templateChoices),
       )
       .addStringOption((option) =>
