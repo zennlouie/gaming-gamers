@@ -26,7 +26,11 @@ if (!token) {
 
 const data = loadData();
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds],
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+  ],
 });
 const AUTO_REINVITE_INTERVAL_MS = 30 * 1000;
 const DEFAULT_TIMEZONE_OFFSET_MINUTES = new Date().getTimezoneOffset() * -1;
@@ -81,6 +85,15 @@ function getQueueRoleMentions(queue) {
   }
 
   return queue.roleMention ? [queue.roleMention] : [];
+}
+
+function getTemplateKeysForRoleMentions(guildId, roleIds) {
+  const guildRoleMappings = data.roleMappings[guildId] || {};
+  const roleIdSet = new Set(roleIds);
+
+  return Object.values(getAllTemplates(data.customTemplates))
+    .filter((template) => roleIdSet.has(guildRoleMappings[template.key]))
+    .map((template) => template.key);
 }
 
 function normalizeTemplateKey(value) {
@@ -240,6 +253,8 @@ function buildHelpMessage() {
     '',
     '`/setrole game:<template> role:@Role`',
     'Sets which role gets pinged for a game template.',
+    'If someone manually pings a configured game role in chat, the bot auto-creates an invite for the matching game.',
+    'If multiple configured game roles are pinged in one message, the bot creates one combined invite and uses the rest of the message as the note.',
     '',
     '`/queueconfig`',
     'Shows the current role mapping for each game.',
@@ -485,6 +500,80 @@ async function announceQueueJoin(queue, username) {
   } catch (error) {
     console.error('Failed to announce queue join', error);
   }
+}
+
+function getNoteFromMessageContent(content, roleIds) {
+  if (!content) {
+    return '';
+  }
+
+  const withoutRoleMentions = roleIds.reduce(
+    (text, roleId) => text.replace(new RegExp(`<@&${roleId}>`, 'g'), ' '),
+    content,
+  );
+
+  return withoutRoleMentions.replace(/\s+/g, ' ').trim();
+}
+
+async function createQueueInvite({
+  guildId,
+  channel,
+  hostUserId,
+  note = '',
+  templateKeys,
+  scheduledDate = new Date(),
+  timezoneOffsetMinutes = getGuildTimezoneOffsetMinutes(guildId),
+  timezoneLabel = formatTimezoneLabel(timezoneOffsetMinutes),
+}) {
+  const uniqueTemplateKeys = [...new Set(templateKeys)];
+  const templates = uniqueTemplateKeys.map((templateKey) => getTemplateByKey(templateKey));
+
+  if (!templates.length || templates.some((template) => !template)) {
+    throw new Error('Cannot create queue invite without valid templates.');
+  }
+
+  const largestTemplateSize = Math.max(...templates.map((template) => template.size));
+  const roleIds = uniqueTemplateKeys
+    .map((templateKey) => data.roleMappings[guildId]?.[templateKey] || null)
+    .filter(Boolean);
+  const uniqueRoleIds = [...new Set(roleIds)];
+  const roleMentions = uniqueRoleIds.map((roleId) => `<@&${roleId}>`);
+
+  const queue = {
+    queueId: createQueueId(),
+    templateKey: uniqueTemplateKeys[0],
+    templateKeys: uniqueTemplateKeys,
+    hostUserId,
+    guildId,
+    channelId: channel.id,
+    messageId: null,
+    targetSize: largestTemplateSize,
+    note,
+    primaryUsers: [hostUserId],
+    secondaryUsers: [],
+    createdAt: new Date().toISOString(),
+    scheduledFor: scheduledDate.toISOString(),
+    timezoneOffsetMinutes,
+    timezoneLabel,
+    shouldAutoReinvite: false,
+    autoReinvitedAt: null,
+    roleMention: roleMentions[0] || null,
+    roleMentions,
+    readyAnnounced: false,
+  };
+
+  const message = await channel.send({
+    content: roleMentions.join(' ') || undefined,
+    embeds: [buildQueueEmbed(queue)],
+    components: buildQueueComponents(queue),
+    allowedMentions: { roles: uniqueRoleIds },
+  });
+
+  queue.messageId = message.id;
+  data.queues[makeQueueId(queue.queueId)] = queue;
+  saveData(data);
+
+  return queue;
 }
 
 function removeUserFromQueue(queue, userId) {
@@ -1040,6 +1129,36 @@ client.on(Events.InteractionCreate, async (interaction) => {
         await interaction.reply(payload).catch(() => null);
       }
     }
+  }
+});
+
+client.on(Events.MessageCreate, async (message) => {
+  try {
+    if (!message.inGuild() || message.author.bot) {
+      return;
+    }
+
+    const mentionedRoleIds = [...message.mentions.roles.keys()];
+    if (!mentionedRoleIds.length) {
+      return;
+    }
+
+    const matchedTemplateKeys = getTemplateKeysForRoleMentions(message.guildId, mentionedRoleIds);
+    if (!matchedTemplateKeys.length) {
+      return;
+    }
+
+    const note = getNoteFromMessageContent(message.content, mentionedRoleIds);
+
+    await createQueueInvite({
+      guildId: message.guildId,
+      channel: message.channel,
+      hostUserId: message.author.id,
+      note,
+      templateKeys: matchedTemplateKeys,
+    });
+  } catch (error) {
+    console.error('Message invite auto-create failed', error);
   }
 });
 

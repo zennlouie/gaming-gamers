@@ -1,6 +1,6 @@
 # Gaming Gamers Discord Bot
 
-A small Discord bot for organizing game invites with reusable templates, queue buttons, and per-game ping roles. Invites can target one game or multiple games at once.
+A small Discord bot for organizing game invites with reusable templates, queue buttons, and per-game ping roles. Invites can target one game or multiple games at once, and configured game-role pings can auto-start an invite.
 
 ## Features
 
@@ -14,6 +14,9 @@ A small Discord bot for organizing game invites with reusable templates, queue b
 - Players join the main queue with a button
 - Extra players can join the overflow / non-priority lane with a separate button
 - `/setrole` sets which role gets pinged for each game template
+- If someone pings a configured game role in chat, the bot automatically creates an invite for the matching game
+- If multiple configured game roles are pinged in one message, the bot creates one combined invite using all matched games
+- The message author becomes the host for auto-created invites, and the rest of their message becomes the queue note
 - Queue state and role mappings are stored in `data/bot-data.json`
 
 ## Commands
@@ -23,6 +26,7 @@ A small Discord bot for organizing game invites with reusable templates, queue b
 - `/settimezone timezone:GMT+8`
 - `/creategame name:"Marvel Rivals" size:6 key:marvel-rivals`
 - `/setrole game:apex role:@Apex`
+- `@Apex ranked grind?`
 - `/queueconfig`
 - `/help`
 
@@ -30,7 +34,8 @@ A small Discord bot for organizing game invites with reusable templates, queue b
 
 1. Put your bot token in `.env` as `TOKEN=...`
 2. Invite the bot to your server with `applications.commands` and `bot` scopes
-3. Run:
+3. In the Discord Developer Portal, enable `Message Content Intent` for the bot if you want role pings in chat to auto-create invites
+4. Run:
 
 ```bash
 npm start
