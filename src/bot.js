@@ -471,6 +471,22 @@ async function announceQueueStart(queue, startedByUserId) {
   await announceQueue(queue, `Game starting now, called by <@${startedByUserId}>!`);
 }
 
+async function announceQueueJoin(queue, username) {
+  try {
+    const channel = await client.channels.fetch(queue.channelId);
+    if (!channel?.isTextBased()) {
+      return;
+    }
+
+    await channel.send({
+      content: `${username} joined the queue.`,
+      allowedMentions: { parse: [] },
+    });
+  } catch (error) {
+    console.error('Failed to announce queue join', error);
+  }
+}
+
 function removeUserFromQueue(queue, userId) {
   queue.primaryUsers = queue.primaryUsers.filter((id) => id !== userId);
   queue.secondaryUsers = queue.secondaryUsers.filter((id) => id !== userId);
@@ -930,6 +946,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       let feedback = 'No change made.';
       const wasReady = isQueueReady(queue);
+      let shouldAnnounceJoin = false;
 
       if (lane === 'reinvite') {
         await resendQueueInvite(queue, interaction.user.id);
@@ -983,6 +1000,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         feedback = 'You left the queue.';
       } else if (lane === 'primary' || lane === 'secondary') {
         feedback = addUserToQueue(queue, interaction.user.id, lane);
+        shouldAnnounceJoin = true;
       }
 
       const isReadyNow = isQueueReady(queue);
@@ -992,6 +1010,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       saveData(data);
       await syncQueueMessage(queue);
+      if (shouldAnnounceJoin) {
+        await announceQueueJoin(queue, interaction.user.username);
+      }
 
       if (!wasReady && isReadyNow && !queue.readyAnnounced) {
         queue.readyAnnounced = true;
