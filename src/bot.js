@@ -109,7 +109,7 @@ function formatUsers(userIds) {
 }
 
 function getJoinedUserIds(queue) {
-  return [...queue.primaryUsers, ...queue.secondaryUsers];
+  return [...queue.primaryUsers];
 }
 
 function isQueueReady(queue) {
@@ -259,8 +259,7 @@ function buildHelpMessage() {
     '`/queueconfig`',
     'Shows the current role mapping for each game.',
     '',
-    '`Join Queue` adds you to the main lineup.',
-    '`Join Sub` adds you as a sub.',
+    '`Join Queue` adds you to the queue.',
     '`Reinvite` resends the current invite and pings the role again.',
     '`Start Game` pings everyone currently in the queue, and anyone in the queue can use it.',
     '`Cancel Invite` removes the queue, and only the host can use it.',
@@ -279,11 +278,6 @@ function buildQueueEmbed(queue) {
     : queue.autoReinvitedAt
       ? 'Auto-reinvited by the bot'
       : null;
-  const statusValue = queue.canceledAt
-    ? `Canceled by <@${queue.canceledByUserId || queue.hostUserId}>`
-    : isQueueReady(queue)
-      ? 'Ready / Full'
-      : 'Looking for players';
 
   const embed = new EmbedBuilder()
     .setTitle(`${templateLabel} Queue`)
@@ -293,10 +287,8 @@ function buildQueueEmbed(queue) {
       { name: 'Host', value: `<@${queue.hostUserId}>`, inline: true },
       { name: 'Time', value: formatQueueTime(queue), inline: true },
       { name: 'Size', value: filled, inline: true },
-      { name: 'Status', value: statusValue, inline: true },
       ...(reinviteValue ? [{ name: 'Reinvited By', value: reinviteValue, inline: true }] : []),
       { name: 'Queue', value: formatUsers(queue.primaryUsers), inline: true },
-      { name: 'Subs', value: formatUsers(queue.secondaryUsers), inline: true },
     )
     .setFooter({ text: `Template: ${templateKeys.join(', ')}` })
     .setTimestamp(new Date(queue.createdAt));
@@ -307,7 +299,6 @@ function buildQueueEmbed(queue) {
 function buildQueueComponents(queue) {
   const templates = getQueueTemplates(queue);
   const primaryButtonLabel = templates[0]?.primaryButtonLabel || 'Join Queue';
-  const secondaryButtonLabel = templates[0]?.secondaryButtonLabel || 'Join Sub';
   const messageKey = makeQueueId(queue.queueId);
 
   return [
@@ -316,10 +307,6 @@ function buildQueueComponents(queue) {
         .setCustomId(`${messageKey}:primary`)
         .setLabel(primaryButtonLabel)
         .setStyle(ButtonStyle.Success),
-      new ButtonBuilder()
-        .setCustomId(`${messageKey}:secondary`)
-        .setLabel(secondaryButtonLabel)
-        .setStyle(ButtonStyle.Primary),
       new ButtonBuilder()
         .setCustomId(`${messageKey}:leave`)
         .setLabel('Leave Queue')
@@ -583,17 +570,12 @@ function removeUserFromQueue(queue, userId) {
 function addUserToQueue(queue, userId, lane) {
   removeUserFromQueue(queue, userId);
 
-  if (lane === 'primary') {
-    queue.primaryUsers.push(userId);
-    return 'Joined the main queue.';
+  if (lane !== 'primary') {
+    return 'No change made.';
   }
 
-  if (lane === 'secondary') {
-    queue.secondaryUsers.push(userId);
-    return 'Joined the overflow / non-priority queue.';
-  }
-
-  return 'No change made.';
+  queue.primaryUsers.push(userId);
+  return 'Joined the queue.';
 }
 
 async function createQueueFromCommand(interaction) {
@@ -1086,7 +1068,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (lane === 'leave') {
         removeUserFromQueue(queue, interaction.user.id);
         feedback = 'You left the queue.';
-      } else if (lane === 'primary' || lane === 'secondary') {
+      } else if (lane === 'primary') {
         feedback = addUserToQueue(queue, interaction.user.id, lane);
         shouldAnnounceJoin = true;
       }

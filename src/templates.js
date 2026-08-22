@@ -4,42 +4,36 @@ const GAME_TEMPLATES = {
     name: 'APEX',
     size: 3,
     primaryButtonLabel: 'Join Queue',
-    secondaryButtonLabel: 'SUB',
   },
   valorant: {
     key: 'valorant',
     name: 'VALORANT',
     size: 5,
     primaryButtonLabel: 'Join Queue',
-    secondaryButtonLabel: 'SUB',
   },
   cs: {
     key: 'cs',
     name: 'CS',
     size: 5,
     primaryButtonLabel: 'Join Queue',
-    secondaryButtonLabel: 'SUB',
   },
   aram: {
     key: 'aram',
     name: 'ARAM',
     size: 5,
     primaryButtonLabel: 'Join Queue',
-    secondaryButtonLabel: 'Join Sub',
   },
   arena: {
     key: 'arena',
     name: 'ARENA',
     size: 3,
     primaryButtonLabel: 'Join Queue',
-    secondaryButtonLabel: 'SUB',
   },
   amongus: {
     key: 'amongus',
     name: 'AMONG US',
     size: 15,
     primaryButtonLabel: 'Join Queue',
-    secondaryButtonLabel: 'SUB',
   },
 };
 
