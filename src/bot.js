@@ -262,7 +262,7 @@ function buildHelpMessage() {
     '`Join Queue` adds you to the main lineup.',
     '`Join Sub` adds you as a sub.',
     '`Reinvite` resends the current invite and pings the role again.',
-    '`Start Game` pings everyone currently in the queue, and only the host can use it.',
+    '`Start Game` pings everyone currently in the queue, and anyone in the queue can use it.',
     '`Cancel Invite` removes the queue, and only the host can use it.',
     'If `time` is set and the queue is still not full when that time arrives, the bot auto-reinvites once.',
     '',
@@ -290,14 +290,13 @@ function buildQueueEmbed(queue) {
     .setDescription(queue.note || null)
     .setColor(0xf97316)
     .addFields(
-      { name: 'WALANG TRABAHONG NAG AYA', value: `<@${queue.hostUserId}>`, inline: true },
-      { name: 'Game Time', value: formatQueueTime(queue), inline: true },
-      { name: 'Queue Size', value: filled, inline: true },
-      { name: 'Games', value: templateLabel, inline: false },
+      { name: 'Host', value: `<@${queue.hostUserId}>`, inline: true },
+      { name: 'Time', value: formatQueueTime(queue), inline: true },
+      { name: 'Size', value: filled, inline: true },
       { name: 'Status', value: statusValue, inline: true },
       ...(reinviteValue ? [{ name: 'Reinvited By', value: reinviteValue, inline: true }] : []),
-      { name: 'Queue', value: formatUsers(queue.primaryUsers), inline: false },
-      { name: 'SUB', value: formatUsers(queue.secondaryUsers), inline: false },
+      { name: 'Queue', value: formatUsers(queue.primaryUsers), inline: true },
+      { name: 'Subs', value: formatUsers(queue.secondaryUsers), inline: true },
     )
     .setFooter({ text: `Template: ${templateKeys.join(', ')}` })
     .setTimestamp(new Date(queue.createdAt));
@@ -1068,9 +1067,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       if (lane === 'start') {
-        if (interaction.user.id !== queue.hostUserId) {
+        if (!getJoinedUserIds(queue).includes(interaction.user.id)) {
           await interaction.reply({
-            content: 'Only the invite host can start this queue.',
+            content: 'Only someone currently in the queue can start this game.',
             ephemeral: true,
           });
           return;
